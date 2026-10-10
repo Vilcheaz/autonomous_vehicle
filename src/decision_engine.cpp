@@ -30,9 +30,7 @@ DecisionEngine::DecisionEngine(const PipelineConfig&       cfg,
     : cfg_(cfg), perception_queue_(perception_queue),
       command_queue_(command_queue), rc_receiver_(rc_receiver), pipe_path_(pipe_path),
       servo_(cfg.servo_gpio_pin),
-      pi_throttle_controller_(cfg, PIDAxis::THROTTLE, cfg.pi_kp, cfg.pi_ki),
-      pd_steer_controller_(cfg, PIDAxis::STEERING, cfg.pd_kp, 0.0f, cfg.pd_kd),
-      vfh_controller_(cfg) {}
+      follow_controller_(cfg) {}
 
 DecisionEngine::~DecisionEngine() { stop(); }
 
@@ -100,21 +98,18 @@ void DecisionEngine::pipe_reader_loop() {
             leftover.erase(0, pos + 1);
 
             if (keyword == "follow_me") {
-                mode_.store(DriveMode::FOLLOW);
-                servo_.setAngle(cfg_.angle_follow_me_mode);
-                fprintf(stdout, "[T3] Wake word: '%s' -> mode FOLLOW\n", keyword.c_str());
+                mode_request_queue_.push(DriveMode::FOLLOW);
+                fprintf(stdout, "[T3] Wake word: '%s' -> request FOLLOW\n", keyword.c_str());
             } 
             
             else if (keyword == "autopilot") {
-                mode_.store(DriveMode::AUTOPILOT);
-                servo_.setAngle(cfg_.angle_autopilot_mode);
-                fprintf(stdout, "[T3] Wake word: '%s' -> mode AUTOPILOT\n", keyword.c_str());
+                mode_request_queue_.push(DriveMode::AUTOPILOT);
+                fprintf(stdout, "[T3] Wake word: '%s' -> request search then FOLLOW\n", keyword.c_str());
             } 
 
             else if (keyword == "stop_engine") {
-                mode_.store(DriveMode::IDLE);
-                command_queue_.push(DriveCommand{0.0f, 0.0f});
-                fprintf(stdout, "[T3] Wake word: '%s' -> mode IDLE\n", keyword.c_str());
+                mode_request_queue_.push(DriveMode::IDLE);
+                fprintf(stdout, "[T3] Wake word: '%s' -> request IDLE\n", keyword.c_str());
             }
             
             else if (keyword == "three_sixty") {
@@ -138,95 +133,104 @@ void DecisionEngine::pipe_reader_loop() {
     fprintf(stdout, "[T3] Pipe reader stopped\n");
 }
 
+void DecisionEngine::apply_mode_request(DriveMode mode) {
+    command_queue_.push(DriveCommand{});
+    if (mode == DriveMode::IDLE || mode == DriveMode::MANUAL) {
+        Action discarded;
+        while (action_queue_.pop(discarded, 0)) {}
+    }
+    follow_controller_.stop();
+    last_perception_ms_ = 0;
+    mode_.store(mode);
+    if (mode == DriveMode::FOLLOW || mode == DriveMode::AUTOPILOT) {
+        // Searching for a person needs the same view used while following.
+        servo_.setAngle(cfg_.angle_follow_me_mode);
+        follow_controller_.start(mode == DriveMode::AUTOPILOT, now_ms());
+    }
+    fprintf(stdout, "[T3] Operator request -> %s\n", mode_name(mode));
+    update_follow_mode();
+}
+
+void DecisionEngine::update_follow_mode() {
+    auto state = follow_controller_.state();
+    if (state != reported_follow_state_) {
+        fprintf(stdout, "[T3] Follow state: %s -> %s\n",
+                FollowSearchController::state_name(reported_follow_state_),
+                FollowSearchController::state_name(state));
+        reported_follow_state_ = state;
+    }
+    DriveMode requested = mode_selector_.requested_mode();
+    if (requested != DriveMode::FOLLOW && requested != DriveMode::AUTOPILOT) return;
+    if (state == FollowSearchController::State::IDLE) {
+        fprintf(stdout, "[T3] Startup scan found nobody -> IDLE (request FOLLOW again or cycle RC switch)\n");
+        mode_selector_.finish_startup();
+        mode_.store(DriveMode::IDLE);
+        command_queue_.push(DriveCommand{});
+    } else {
+        mode_.store(state == FollowSearchController::State::SEARCHING
+            ? DriveMode::AUTOPILOT : DriveMode::FOLLOW);
+    }
+}
+
 void DecisionEngine::decision_loop() {
-    DriveMode switch_mode = DriveMode::IDLE;
     fprintf(stdout, "[T3] Decision engine started in IDLE\n");
     while (running_) {
+        bool rc_fresh = rc_receiver_.signal_fresh(cfg_.rc_signal_timeout_ms);
+        bool rc_active = rc_fresh && rc_receiver_.activate_switch_reading();
+        DriveMode rc_mode = rc_fresh ? rc_receiver_.selected_drive_mode() : DriveMode::IDLE;
+        if (auto request = mode_selector_.update_rc(rc_fresh, rc_active, rc_mode)) {
+            apply_mode_request(*request);
+        }
+        DriveMode voice_mode;
+        while (mode_request_queue_.pop(voice_mode, 0)) {
+            if (auto request = mode_selector_.request_voice(voice_mode, rc_active, rc_mode)) {
+                apply_mode_request(*request);
+            } else {
+                fprintf(stdout, "[T3] Voice mode request ignored: active RC switch selects %s\n",
+                        mode_name(rc_mode));
+            }
+        }
+
         Action action;
-        while (action_queue_.pop(action, 0)) {
+        if (mode_selector_.requested_mode() != DriveMode::MANUAL && action_queue_.pop(action, 0)) {
             execute_action(action);
-        }
-
-        // The RC switch, whenever it has a fresh signal, is the sole authority
-        // over AUTOPILOT/FOLLOW/MANUAL — it overrides whatever voice control
-        // last set. Without a live RC link the switch position can't be
-        // trusted, so mode falls back to voice control (this also covers
-        // running with no receiver attached at all, e.g. voice-only testing).
-        if (rc_receiver_.signal_fresh(cfg_.rc_signal_timeout_ms)) {
-            if  (rc_receiver_.activate_switch_reading()) {
-                switch_mode = rc_receiver_.selected_drive_mode();
-            }
-
-            if (switch_mode != DriveMode::MANUAL) {
-                manual_reentry_blocked_ = false;  // switch left MANUAL: re-arm it
-            } else if (manual_reentry_blocked_) {
-                // Was manually driven, the link dropped, and the switch is
-                // still sitting at MANUAL — refuse to resume until it's
-                // physically cycled off that position first.
-                switch_mode = DriveMode::IDLE;
-            }
-
-            if (switch_mode != mode_.load()) {
-                fprintf(stdout, "[T3] RC switch -> mode %s\n", mode_name(switch_mode));
-                if (switch_mode == DriveMode::FOLLOW)    servo_.setAngle(cfg_.angle_follow_me_mode);
-                if (switch_mode == DriveMode::AUTOPILOT) servo_.setAngle(cfg_.angle_autopilot_mode);
-            }
-            mode_.store(switch_mode);
-        } else if (mode_.load() == DriveMode::MANUAL) {
-            fprintf(stderr, "[T3] RC signal lost while in MANUAL, mode -> IDLE\n");
-            mode_.store(DriveMode::IDLE);
-            manual_reentry_blocked_ = true;
-        }
-
-        DriveMode m = mode_.load();
-
-        if (m == DriveMode::MANUAL) {
-            // Keep observing detection events, without waiting for inference
-            // or changing the transmitter's command cadence.
-            PerceptionResult observation;
-            if (perception_queue_.pop(observation, 0)) log_person_event(observation, m);
-            command_queue_.push(rc_receiver_.get_drive_command());
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
             continue;
         }
 
-        if (m == DriveMode::IDLE) {
-            PerceptionResult observation;
-            if (perception_queue_.pop(observation, 0)) log_person_event(observation, m);
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            continue;
-        }
-
+        // A short poll keeps operator overrides and search deadlines responsive
+        // even when inference stalls. Only fresh perception permits movement.
         PerceptionResult result;
-        if (!perception_queue_.pop(result, 200)) {
-            command_queue_.push(DriveCommand{0.0f, 0.0f});
-            continue;
+        bool observed = perception_queue_.pop(result, 20);
+        int64_t time_ms = now_ms();
+        DriveMode requested = mode_selector_.requested_mode();
+        bool following = requested == DriveMode::FOLLOW || requested == DriveMode::AUTOPILOT;
+        if (observed) {
+            log_person_event(result, mode_.load());
+            int64_t completed_ms = result.completed_at_ms > 0 ? result.completed_at_ms : time_ms;
+            if (time_ms - completed_ms <= cfg_.follow_perception_timeout_ms) {
+                if (following && last_perception_ms_ > 0 &&
+                    completed_ms - last_perception_ms_ > cfg_.follow_perception_timeout_ms) {
+                    follow_controller_.perception_timeout();
+                }
+                last_perception_ms_ = completed_ms;
+                if (following) follow_controller_.observe(result, time_ms);
+            }
         }
-
-        log_person_event(result, m);
-
-        DriveCommand cmd{0.0f, 0.0f};
-        float steer = 0.0f, throttle = 0.0f;
-
-        switch (m) {
-        case DriveMode::FOLLOW:
-            // Follow the largest tracked person: PD centers them in frame
-            // (steering), PI holds the preset stand-off distance (throttle).
-            steer = pd_steer_controller_.compute_control(result);
-            throttle = pi_throttle_controller_.compute_control(result);
-            cmd = {throttle, steer};
-            break;
-        case DriveMode::AUTOPILOT:
-            // Drives off the depth map alone (no person tracking): VFH+
-            // picks a steering direction from the polar obstacle histogram,
-            // biased toward straight-ahead; throttle is proportional to
-            // that direction's own clearance, eased off in turns.
-            cmd = vfh_controller_.compute_control(result);
-            break;
-        default:
-            break;
+        DriveCommand cmd{};
+        if (requested == DriveMode::MANUAL) {
+            if (rc_receiver_.signal_fresh(cfg_.rc_signal_timeout_ms)) {
+                cmd = rc_receiver_.get_drive_command();
+            }
+        } else if (following) {
+            follow_controller_.tick(time_ms);
+            update_follow_mode();
+            if (last_perception_ms_ > 0 &&
+                time_ms - last_perception_ms_ <= cfg_.follow_perception_timeout_ms) {
+                cmd = follow_controller_.command(time_ms);
+            } else {
+                follow_controller_.perception_timeout();
+            }
         }
-
         command_queue_.push(cmd);
     }
 
@@ -277,8 +281,15 @@ void DecisionEngine::execute_action(Action action) {
         break;
     }
 
+    const DriveMode initial_rc_mode = rc_receiver_.selected_drive_mode();
     auto start = std::chrono::steady_clock::now();
     while (running_) {
+        // Explicit mode/stop requests and an RC switch change preempt actions.
+        if (!mode_request_queue_.empty() ||
+            (rc_receiver_.signal_fresh(cfg_.rc_signal_timeout_ms) &&
+             rc_receiver_.activate_switch_reading() &&
+             (rc_receiver_.selected_drive_mode() != initial_rc_mode ||
+              rc_receiver_.selected_drive_mode() == DriveMode::MANUAL))) break;
         PerceptionResult observation;
         if (perception_queue_.pop(observation, 0)) {
             log_person_event(observation, mode_.load());
@@ -291,5 +302,12 @@ void DecisionEngine::execute_action(Action action) {
     }
 
     command_queue_.push(DriveCommand{0.0f, 0.0f});
+    DriveMode requested = mode_selector_.requested_mode();
+    if (requested == DriveMode::FOLLOW || requested == DriveMode::AUTOPILOT) {
+        // An action rotated the camera: discard its old target-side history.
+        follow_controller_.start(requested == DriveMode::AUTOPILOT, now_ms());
+        last_perception_ms_ = 0;
+        update_follow_mode();
+    }
     fprintf(stdout, "[T3] Action complete\n");
 }

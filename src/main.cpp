@@ -82,6 +82,13 @@ int main(int argc, char** argv) {
                 "follow_target_depth=%.4f raw follow_invert_depth=%s\n",
                 cfg.pd_kp, cfg.pd_kd, cfg.pi_kp, cfg.pi_ki,
                 cfg.follow_target_depth, cfg.follow_invert_depth ? "true" : "false");
+        fprintf(stdout,
+                "[Main] Person search: startup_wait_ms=%d steering=%.3f first_ms=%d reverse_ms=%d "
+                "center_wait_ms=%d perception_timeout_ms=%d reacquire_ramp_ms=%d\n",
+                cfg.follow_startup_wait_ms, cfg.follow_search_steering,
+                cfg.follow_search_first_ms, cfg.follow_search_reverse_ms,
+                cfg.follow_search_center_wait_ms, cfg.follow_perception_timeout_ms,
+                cfg.follow_reacquire_ramp_ms);
         recorder = std::make_unique<PipelineRecorder>(
             record_directory, cfg.camera_width, cfg.camera_height);
         if (!recorder->start()) return 1;

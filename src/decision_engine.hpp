@@ -9,8 +9,8 @@
 #include "safe_queue.hpp"
 #include "perception_result.hpp"
 #include "servo_controller.hpp"
-#include "pid_controller.hpp"
-#include "vfh_controller.hpp"
+#include "follow_search_controller.hpp"
+#include "drive_mode_selector.hpp"
 #include "rc_receiver.hpp"
 #include "person_presence_tracker.hpp"
 
@@ -33,6 +33,8 @@ private:
     void decision_loop();
     void execute_action(Action action);
     void log_person_event(const PerceptionResult& result, DriveMode mode);
+    void apply_mode_request(DriveMode mode);
+    void update_follow_mode();
 
     const PipelineConfig&        cfg_;
     SafeQueue<PerceptionResult>& perception_queue_;
@@ -42,19 +44,19 @@ private:
 
     std::atomic<bool>      running_{false};
     std::atomic<DriveMode> mode_{DriveMode::IDLE};
+    SafeQueue<DriveMode>   mode_request_queue_{4};
     SafeQueue<Action>      action_queue_{4};
 
-    // decision_loop()-only state (single-threaded, no atomics needed): once
-    // the RC link drops while in MANUAL, blocks the switch from re-engaging
-    // MANUAL until it's physically moved off that position first.
-    bool manual_reentry_blocked_{false};
+    // Only the decision thread changes controller, mode-selection and servo
+    // state. The pipe thread submits operator requests rather than racing it.
+    DriveModeSelector mode_selector_;
     PersonPresenceTracker person_tracker_;
+    int64_t last_perception_ms_{0};
+    FollowSearchController::State reported_follow_state_{FollowSearchController::State::IDLE};
 
     ServoController servo_;
 
-    PIDController pd_steer_controller_;
-    PIDController pi_throttle_controller_;
-    VFHController vfh_controller_;
+    FollowSearchController follow_controller_;
 
     std::thread pipe_thread_;
     std::thread decision_thread_;

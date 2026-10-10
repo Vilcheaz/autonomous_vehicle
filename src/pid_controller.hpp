@@ -21,6 +21,7 @@ public:
     // state) when no person is in frame, so a reacquired target doesn't
     // inherit a stale integral/derivative.
     float compute_control(const PerceptionResult& result);
+    void reset();
 
 private:
     bool find_target(const PerceptionResult& result, Detection& out) const;

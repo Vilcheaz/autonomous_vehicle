@@ -13,7 +13,7 @@ struct PipelineConfig {
 
     // ── Inference (T2) ────────────────────────────────────────────────────────
     std::string yolo_hef          = "models/hailo/yolov8s_h8l.hef";
-    DepthModel  depth_model       = DepthModel::DEPTH_ANYTHING;
+    DepthModel  depth_model       = DepthModel::FASTDEPTH;
     int         yolo_input_size   = 640;    // YOLO letterbox target (pixels)
     float       conf_threshold    = 0.4f;
     float       nms_iou_threshold = 0.45f;
@@ -27,11 +27,10 @@ struct PipelineConfig {
     }
 
     // ── Decision (T3) ────────────────────────────────────────────────────────
-    float  obstacle_dist_m        = 1.0f;   // repulsion kicks in below this depth
     size_t command_queue_size     = 2;      // ring buffer slots between T3 and T4
     int    servo_gpio_pin         = 25;     // camera tilt servo pin
     double angle_follow_me_mode   = 0.0;   // degrees
-    double angle_autopilot_mode   = 30.0;    // degrees
+    double angle_autopilot_mode   = 0.0;   // search uses the same camera tilt as FOLLOW
     // Starting points from module_test/follow_gain_tuner.cpp's closed-loop
     // sweep (simplified plant, no motor lag/inertia modeled) — confirm on
     // the real robot and retune from here, don't treat as final.
@@ -43,17 +42,29 @@ struct PipelineConfig {
 
     // Target distance to the tracked person in FOLLOW mode, in the same
     // raw/uncalibrated depth-model units as Detection::depth (see
-    // perception_result.hpp) and obstacle_dist_m above — read the printed
+    // perception_result.hpp) — read the printed
     // depth at the desired stand-off distance during bench testing and set
     // this to match.
-    float  follow_target_depth    = 2.0f;
+    float  follow_target_depth    = 1.5f;
     // Flip if the depth model turns out to report inverse depth (larger
     // value = closer) rather than the assumed larger = farther. This is a
-    // property of the depth model, not of FOLLOW specifically — VFH+
-    // (AUTOPILOT, below) reuses this same flag.
-    bool   follow_invert_depth    = true;
+    // property of the depth model; the legacy VFH test also uses this flag.
+    bool   follow_invert_depth    = false;
 
-    // ── VFH+ (AUTOPILOT) ─────────────────────────────────────────────────────
+    // ── FOLLOW acquisition / AUTOPILOT search ───────────────────────────────
+    int    follow_startup_wait_ms    = 10000; // wait stationary before the first scan
+    float  follow_search_steering    = 0.55f; // zero throttle, slow in-place rotation
+    int    follow_search_first_ms    = 6000;  // turn toward the last known side
+    int    follow_search_reverse_ms  = 12000;  // sweep back past the starting direction
+    float  follow_search_center_band = 0.1f;  // normalized horizontal error around center
+    int    follow_search_center_wait_ms = 500; // possible occlusion: pause before searching
+    int    follow_perception_timeout_ms = 200; // stop on absent/stale inference results
+    int    follow_reacquire_ramp_ms  = 500;   // ease throttle in after acquisition
+    // Loss requires two consecutive empty results; acquisition requires two
+    // consecutive person results. Any person is accepted (no identity tracking).
+
+    // ── Legacy VFH+ module test (not used by the driving pipeline) ────────────
+    float  obstacle_dist_m          = 1.0f; // obstacle threshold in raw depth-model units
     // Hysteresis exit threshold: a sector must clear this — farther away
     // than obstacle_dist_m, same raw units/polarity — to leave the blocked
     // state. Bench-calibrate the same way as obstacle_dist_m/follow_target_depth.

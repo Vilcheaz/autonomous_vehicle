@@ -55,7 +55,7 @@ add_executable(pipeline
     src/inference_engine.cpp
     src/decision_engine.cpp
     src/pid_controller.cpp
-    src/vfh_controller.cpp
+    src/follow_search_controller.cpp
     src/motor_controller.cpp
     src/servo_controller.cpp
     src/rc_receiver.cpp
@@ -86,6 +86,29 @@ target_include_directories(vfh_test PRIVATE ${INCLUDES})
 add_executable(follow_test module_test/follow_controller_test.cpp src/pid_controller.cpp)
 target_link_libraries(follow_test PRIVATE ${OpenCV_LIBS} Threads::Threads)
 target_include_directories(follow_test PRIVATE ${INCLUDES})
+
+add_executable(follow_search_test
+    module_test/follow_search_controller_test.cpp
+    src/follow_search_controller.cpp
+    src/pid_controller.cpp
+)
+target_link_libraries(follow_search_test PRIVATE ${OpenCV_LIBS} Threads::Threads)
+target_include_directories(follow_search_test PRIVATE ${INCLUDES})
+
+add_executable(decision_search_test
+    module_test/decision_search_test.cpp
+    src/decision_engine.cpp
+    src/follow_search_controller.cpp
+    src/pid_controller.cpp
+    src/rc_receiver.cpp
+)
+target_link_libraries(decision_search_test PRIVATE ${OpenCV_LIBS} Threads::Threads)
+target_include_directories(decision_search_test PRIVATE ${INCLUDES})
+
+enable_testing()
+add_test(NAME follow_search COMMAND follow_search_test)
+add_test(NAME decision_search COMMAND decision_search_test)
+add_test(NAME person_presence COMMAND person_event_test)
 
 add_executable(gain_tuner module_test/follow_gain_tuner.cpp src/pid_controller.cpp)
 target_link_libraries(gain_tuner PRIVATE ${OpenCV_LIBS} Threads::Threads)

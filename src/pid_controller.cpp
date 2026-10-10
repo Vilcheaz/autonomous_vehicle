@@ -8,6 +8,13 @@ PIDController::PIDController(const PipelineConfig& cfg, PIDAxis axis,
 
 PIDController::~PIDController() {}
 
+void PIDController::reset() {
+    integral_ = 0.0f;
+    prev_error_ = 0.0f;
+    prev_time_ms_ = 0;
+    had_target_ = false;
+}
+
 bool PIDController::find_target(const PerceptionResult& result, Detection& out) const {
     bool found = false;
     int  best_area = -1;
@@ -42,9 +49,7 @@ float PIDController::compute_control(const PerceptionResult& result) {
     if (!find_target(result, target)) {
         // Lost the person: hold this axis at zero and drop the accumulated
         // state so reacquiring them doesn't inherit a stale integral/derivative.
-        integral_   = 0.0f;
-        prev_error_ = 0.0f;
-        had_target_ = false;
+        reset();
         return 0.0f;
     }
 

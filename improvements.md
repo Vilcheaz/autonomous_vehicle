@@ -1,12 +1,14 @@
 # Improvements
 
-## 1. If in Mode Follow and suddently no more people it should automatically switch to idle or autopilot
-- If follow mode and no person then switch automatically to autopilot and make it go around hoping to find somebody.
-- If somebody is found, then recover into follow mode else keep autopilot on. Only stronger authority is setting the
-driving mode from the rc transmitter or by voice
+## 1. Follow-me recovery implemented; tune on the car
+- AUTOPILOT now searches in place toward the person's last known side, then
+  sweeps back once. Any confirmed person returns the car to FOLLOW.
+- Startup waits 10 seconds, scans once, then returns to IDLE if nobody appears.
+- Failed recovery after following waits stationary for reappearance.
+- Tune search speed and sweep durations with the current inference cadence.
 
 ## 2. Actions were neglected lately, going further with them or exclude? maybe a bit pointless imo
 
-## 3. Test follow me and autopilot modes and set best gains
+## 3. Test follow-me gains and search rotation speed/durations
 
 ## 4. demo

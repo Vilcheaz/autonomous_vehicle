@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include <cstdint>
 #include <opencv2/opencv.hpp>
 
 struct Detection {
@@ -17,4 +18,5 @@ struct PerceptionResult {
     cv::Mat                frame;      // original BGR camera frame
     int                    frame_w;
     int                    frame_h;
+    int64_t                completed_at_ms{0}; // steady clock, set before publishing inference
 };

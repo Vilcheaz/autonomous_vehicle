@@ -4,6 +4,43 @@ Colab for training wake word ONNX models
 
 https://colab.research.google.com/drive/1q1oe2zOyZp7UsB3jJiQ1IFn8z5YfjwEb#scrollTo=qgaKWIY6WlJ1
 
+## Follow-me and person search
+
+`follow_me` (or the RC FOLLOW position) starts a follow session. The car waits
+stationary for up to 10 seconds for a person. If nobody appears, AUTOPILOT
+performs one slow, bounded in-place scan: right for 3 seconds, then left for
+6 seconds. If that startup scan finds nobody, the car returns to IDLE. A held
+RC switch does not restart it: repeat `follow_me`, change the mode switch, or
+disable and re-enable RC mode selection to begin a new session.
+
+While following, one missed person frame stops movement. Two consecutive
+empty inference results start AUTOPILOT recovery toward the largest person's
+last known side, then sweep in the opposite direction. A person last seen
+near the center gets a short 500 ms pause before the scan. After an unsuccessful
+recovery scan, the car waits stationary for a person to reappear; it does not
+keep rotating. Any person can be acquired, and the largest bounding box still
+determines the target. Two consecutive person results confirm acquisition;
+the first result pauses rotation, and confirmed acquisition returns to FOLLOW
+with a short throttle ramp.
+
+The `autopilot` voice command and RC AUTOPILOT position request an immediate
+scan followed by FOLLOW, with no initial 10-second wait. VFH+ is no longer used
+by the driving pipeline. Both follow and search use the follow-me camera tilt.
+Search commands have zero throttle. Missing/stale inference stops autonomous
+movement, and operator mode changes cancel the search. `stop_engine` also
+stops when the RC switch is held in an autonomous position; other voice mode
+requests respect an enabled, live RC mode switch. MANUAL link loss still
+requires physically leaving MANUAL before it can resume.
+
+Tune `follow_search_steering`, `follow_search_first_ms`, and
+`follow_search_reverse_ms` in `src/config.hpp` on the real car. The defaults
+are 0.25 steering and a 3/6-second sweep; they are timed rotations, not measured
+angles. Startup wait, center pause, inference freshness limit, and throttle
+ramp are also configurable there. Search state transitions are written to
+`pipeline.log` during recording. Select `14) Follow search / recovery test`
+in `./run.sh`, or run `ctest --test-dir build --output-on-failure`, for tests
+that do not access robot hardware.
+
 ## Full pipeline recording
 
 Run `./run.sh`, choose `11) Full Pipeline`, and answer `y` to the recording

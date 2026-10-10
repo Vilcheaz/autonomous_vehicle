@@ -1,5 +1,6 @@
 #include "inference_engine.hpp"
 #include "pipeline_recorder.hpp"
+#include "types.hpp"
 #include <algorithm>
 #include <cstdio>
 
@@ -210,6 +211,7 @@ void InferenceEngine::inference_loop() {
         result.frame      = frame;
         result.frame_w    = frame.cols;
         result.frame_h    = frame.rows;
+        result.completed_at_ms = now_ms();
 
         if (recorder_) {
             // Keep the decision path moving while the recorder retains its

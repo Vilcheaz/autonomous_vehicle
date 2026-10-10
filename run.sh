@@ -17,7 +17,7 @@ echo "3) Object detection"
 echo "4) Servo test"
 echo "5) RC receiver test"
 echo "6) Motor test"
-echo "7) VFH+ controller test (AUTOPILOT)"
+echo "7) Legacy VFH+ controller test (not used by AUTOPILOT)"
 echo "8) Follow controller test (FOLLOW)"
 echo "9) Follow PD/PI gain tuner (FOLLOW, ~1 min)"
 
@@ -28,6 +28,7 @@ echo "10) Camera capture and inference"
 echo "11) Full Pipeline"
 echo "12) Pipeline recorder test (no robot hardware)"
 echo "13) Person presence event test (no robot hardware)"
+echo "14) Follow search / recovery test (no robot hardware)"
 
 read -p "Select: " choice
 
@@ -81,6 +82,8 @@ elif [ "$choice" = "12" ]; then
     ./build/recorder_test
 elif [ "$choice" = "13" ]; then
     ./build/person_event_test
+elif [ "$choice" = "14" ]; then
+    ctest --test-dir build --output-on-failure -R search
 else
     echo "Invalid option"
 fi

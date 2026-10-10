@@ -6,7 +6,9 @@
 #include "config.hpp"
 #include "perception_result.hpp"
 
-// Drives AUTOPILOT. Unlike FOLLOW there is no tracked object — just the
+// Legacy depth-only controller, retained for its standalone module test.
+// AUTOPILOT in the driving pipeline now uses FollowSearchController instead.
+// There is no tracked object here — just the
 // dense depth_map — so steering comes from a VFH+-style polar histogram
 // (nearest obstacle per angular sector, hysteresis blocked/free, wide/narrow
 // valley selection biased toward straight-ahead) and throttle is derived
